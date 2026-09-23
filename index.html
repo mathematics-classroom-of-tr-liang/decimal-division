@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>小數平分操作練習 - 特教版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
+        
+        body {
+            font-family: 'Noto Sans TC', sans-serif;
+            user-select: none;
+            background-color: #f8fafc;
+            overflow-y: auto; 
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            padding-bottom: 2rem;
+        }
+
+        .coin {
+            cursor: grab;
+            transition: transform 0.1s;
+            touch-action: none;
+        }
+        .coin.dragging {
+            opacity: 0.9;
+            transform: scale(1.1);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.3);
+            pointer-events: none; 
+            position: fixed;
+            z-index: 9999;
+        }
+
+        .drop-target-active {
+            background-color: #fef3c7 !important;
+            border-color: #f59e0b !important;
+        }
+
+        .bank-slot {
+            @apply bg-white p-2 rounded-xl border border-slate-100 shadow-inner overflow-y-auto mb-2;
+            min-height: 80px; 
+        }
+        
+        .modal-animate {
+            animation: fadeIn 0.15s ease-out forwards;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: scale(0.95); }
+            to { opacity: 1; transform: scale(1); }
+        }
+
+        .numpad-btn {
+            @apply h-14 bg-slate-100 rounded-xl text-xl font-black text-slate-700 hover:bg-indigo-100 active:scale-95 transition-all flex items-center justify-center;
+        }
+
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; border: 2px solid #f1f5f9; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    </style>
+</head>
+<body class="p-4 md:p-6">
+    <div id="root" class="max-w-[1400px] mx-auto w-full flex flex-col gap-4"></div>
+
+    <script>
+        let history = [];
+        let state = {
+            dividend: "1.44",
+            divisor: 3,
+            bank: { ones: 1, tenths: 4, hundredths: 4 },
+            piles: Array.from({ length: 3 }, () => ({ ones: 0, tenths: 0, hundredths: 0 })),
+            isSetting: false,
+            quizStep: 'idle', 
+            tempRemainder: "",
+            message: "請開始平分個位、十分位與百分位表徵。"
+        };
+
+        function getBankTotal() {
+            const totalCents = state.bank.ones * 100 + state.bank.tenths * 10 + state.bank.hundredths;
+            return (totalCents / 100).toFixed(2);
+        }
+
+        function getPileTotal(pile) {
+            const totalCents = pile.ones * 100 + pile.tenths * 10 + pile.hundredths;
+            return (totalCents / 100).toFixed(2);
+        }
+
+        function saveToHistory() {
+            history.push(JSON.parse(JSON.stringify(state)));
+            if (history.length > 20) history.shift();
+        }
+
+        function setState(newState) {
+            saveToHistory();
+            state = { ...state, ...newState };
+            updateMessage();
+            render();
+        }
+
+        function updateMessage() {
+            const bankTotal = state.bank.ones * 100 + state.bank.tenths * 10 + state.bank.hundredths;
+            if (state.bank.ones >= state.divisor) {
+                state.message = "銀行還有個位『1』，可繼續平分。";
+            } else if (state.bank.ones > 0 && state.bank.ones < state.divisor) {
+                state.message = "個位『1』不夠分了，請拖曳到換幣區換成 10 個十分位『0.1』。";
+            } else if (state.bank.tenths >= state.divisor) {
+                state.message = "銀行還有十分位『0.1』，可繼續平分。";
+            } else if (state.bank.tenths > 0 && state.bank.tenths < state.divisor) {
+                state.message = "十分位『0.1』不夠分了，請拖曳到換幣區換成 10 個百分位『0.01』。";
+            } else if (bankTotal >= state.divisor) {
+                state.message = "繼續平分剩下的百分位『0.01』。";
+            } else {
+                state.message = "分完了嗎？請點擊右下角「完成分錢」檢查。";
+            }
+        }
+
+        let activeDrag = { el: null, type: null, offsetX: 25, offsetY: 20 };
+
+        function handleDragStart(e, type) {
+            const point = e.type.includes('touch') ? e.touches[0] : e;
+            activeDrag.type = type;
+            activeDrag.el = e.target.closest('.coin').cloneNode(true);
+            activeDrag.el.classList.add('dragging');
+            activeDrag.el.style.left = `${point.clientX - activeDrag.offsetX}px`;
+            activeDrag.el.style.top = `${point.clientY - activeDrag.offsetY}px`;
+            document.body.appendChild(activeDrag.el);
+
+            const moveEvent = e.type.includes('touch') ? 'touchmove' : 'mousemove';
+            const endEvent = e.type.includes('touch') ? 'touchend' : 'mouseup';
+            window.addEventListener(moveEvent, handleDragMove, { passive: false });
+            window.addEventListener(endEvent, handleDragEnd);
+        }
+
+        function handleDragMove(e) {
+            if (!activeDrag.el) return;
+            if (e.cancelable) e.preventDefault();
+            const point = e.type.includes('touch') ? e.touches[0] : e;
+            activeDrag.el.style.left = `${point.clientX - activeDrag.offsetX}px`;
+            activeDrag.el.style.top = `${point.clientY - activeDrag.offsetY}px`;
+            
+            document.querySelectorAll('.drop-target').forEach(el => el.classList.remove('drop-target-active'));
+            const target = document.elementFromPoint(point.clientX, point.clientY);
+            const dropZone = target?.closest('.drop-target');
+            if (dropZone) dropZone.classList.add('drop-target-active');
+        }
+
+        function handleDragEnd(e) {
+            if (!activeDrag.el) return;
+            const point = e.type.includes('touch') ? e.changedTouches[0] : e;
+            const target = document.elementFromPoint(point.clientX, point.clientY);
+            const dropZone = target?.closest('.drop-target');
+            
+            if (dropZone) {
+                const pileIndex = dropZone.getAttribute('data-pile-index');
+                if (pileIndex !== null) onDrop(parseInt(pileIndex));
+                else if (dropZone.id === 'exchange-zone') onDropExchange();
+            }
+            
+            activeDrag.el.remove();
+            activeDrag.el = null;
+            window.removeEventListener('mousemove', handleDragMove);
+            window.removeEventListener('mouseup', handleDragEnd);
+            window.removeEventListener('touchmove', handleDragMove);
+            window.removeEventListener('touchend', handleDragEnd);
+        }
+
+        function onDrop(pileIndex) {
+            const type = activeDrag.type;
+            if (!type || state.bank[type] <= 0) return;
+            const newPiles = JSON.parse(JSON.stringify(state.piles));
+            newPiles[pileIndex][type]++;
+            setState({ bank: { ...state.bank, [type]: state.bank[type] - 1 }, piles: newPiles });
+        }
+
+        function onDropExchange() {
+            if (activeDrag.type === 'ones' && state.bank.ones > 0) {
+                setState({ bank: { ...state.bank, ones: state.bank.ones - 1, tenths: state.bank.tenths + 10 } });
+            } else if (activeDrag.type === 'tenths' && state.bank.tenths > 0) {
+                setState({ bank: { ...state.bank, tenths: state.bank.tenths - 1, hundredths: state.bank.hundredths + 10 } });
+            }
+        }
+
+        function handleManualBack(pileIndex, type) {
+            const newPiles = JSON.parse(JSON.stringify(state.piles));
+            if (newPiles[pileIndex][type] > 0) {
+                newPiles[pileIndex][type]--;
+                setState({ bank: { ...state.bank, [type]: state.bank[type] + 1 }, piles: newPiles });
+            }
+        }
+
+        function checkFairness() {
+            const totals = state.piles.map(p => getPileTotal(p));
+            const allEqual = totals.every(a => a === totals[0]);
+            if (totals.every(a => parseFloat(a) === 0)) {
+                customAlert("還沒開始平分喔！請拖曳表徵。", "info");
+            } else if (allEqual) {
+                customAlert("每一份分到的一樣多，非常公平！", "success");
+            } else {
+                customAlert("每一份分到的不一樣多，再檢查一下喔。", "warning");
+            }
+        }
+
+        function startQuiz() {
+            const totals = state.piles.map(p => getPileTotal(p));
+            if (!totals.every(a => a === totals[0])) {
+                customAlert("大家分到的數量要一樣多喔！", "warning");
+                return;
+            }
+            setState({ quizStep: 'judging' });
+        }
+
+        function handleJudge(choice) {
+            const bankCents = state.bank.ones * 100 + state.bank.tenths * 10 + state.bank.hundredths;
+            if (choice === 'none') {
+                if (bankCents === 0) { 
+                    customAlert("太棒了！精準無誤的分完了！", "success"); 
+                    setState({ quizStep: 'idle' }); 
+                } else {
+                    customAlert("銀行其實還有剩餘喔，再觀察看看。", "warning"); 
+                    setState({ quizStep: 'idle' }); 
+                }
+            } else {
+                setState({ quizStep: 'inputtingRemainder', tempRemainder: "" });
+            }
+        }
+
+        function submitRemainder() {
+            const bankCents = state.bank.ones * 100 + state.bank.tenths * 10 + state.bank.hundredths;
+            const actualRemainder = bankCents / 100;
+            const inputVal = parseFloat(state.tempRemainder) || 0;
+            
+            // Check if input remainder is equal to or greater than divisor
+            if (inputVal >= state.divisor) {
+                customAlert(`餘數 ${inputVal} 大於或等於人數 ${state.divisor} 人，還能再分喔！`, "warning");
+                return;
+            }
+            if (Math.abs(inputVal - actualRemainder) < 0.001) {
+                customAlert("答對了！分得非常正確、邏輯清晰！", "success"); 
+                setState({ quizStep: 'idle' });
+            } else {
+                customAlert("餘數計算不太對喔，再觀察銀行剩下的金額。", "warning"); 
+            }
+        }
+
+        function customAlert(msg, type = "info") {
+            const alertBox = document.createElement('div');
+            const bgClass = type === 'success' ? 'bg-green-600' : (type === 'warning' ? 'bg-orange-500' : 'bg-slate-800');
+            alertBox.className = `fixed top-10 left-1/2 -translate-x-1/2 ${bgClass} text-white px-8 py-4 rounded-2xl shadow-2xl z-[9999] font-black modal-animate flex items-center gap-3 text-lg text-center max-w-[90vw]`;
+            alertBox.innerHTML = `<i data-lucide="${type === 'success' ? 'check-circle' : 'alert-circle'}" size="28"></i> ${msg}`;
+            document.body.appendChild(alertBox);
+            lucide.createIcons();
+            setTimeout(() => { alertBox.style.opacity = '0'; setTimeout(() => alertBox.remove(), 400); }, 3000);
+        }
+
+        function updateProblem() {
+            const newDiv = Math.min(Math.max(parseFloat(document.getElementById('input-dividend').value) || 0.01, 0.01), 9.99);
+            const newDivisor = Math.min(Math.max(parseInt(document.getElementById('input-divisor').value) || 1, 1), 9);
+            
+            const totalCents = Math.round(newDiv * 100);
+            const ones = Math.floor(totalCents / 100);
+            const tenths = Math.floor((totalCents % 100) / 10);
+            const hundredths = totalCents % 10;
+
+            state = {
+                ...state, 
+                dividend: (totalCents / 100).toFixed(2), 
+                divisor: newDivisor,
+                bank: { ones, tenths, hundredths },
+                piles: Array.from({ length: newDivisor }, () => ({ ones: 0, tenths: 0, hundredths: 0 })),
+                isSetting: false, 
+                quizStep: 'idle'
+            };
+            history = []; 
+            setState(state);
+        }
+
+        function generateRandomProblem() {
+            const newDivisor = Math.floor(Math.random() * 4) + 2; // 2 ~ 5 人平分
+            
+            // 產生能在百分位前整除的題目：每人分得的金額（cents）必須為整數
+            const quotientCents = Math.floor(Math.random() * 180) + 15; // 每人獲得 0.15 ~ 1.94
+            const totalCents = quotientCents * newDivisor;
+
+            const ones = Math.floor(totalCents / 100);
+            const tenths = Math.floor((totalCents % 100) / 10);
+            const hundredths = totalCents % 10;
+            const divStr = (totalCents / 100).toFixed(2);
+
+            state = {
+                ...state,
+                dividend: divStr,
+                divisor: newDivisor,
+                bank: { ones, tenths, hundredths },
+                piles: Array.from({ length: newDivisor }, () => ({ ones: 0, tenths: 0, hundredths: 0 })),
+                isSetting: false,
+                quizStep: 'idle'
+            };
+            history = [];
+            setState(state);
+            customAlert(`🎲 已為您產生新題目：${divStr} 平分給 ${newDivisor} 人（可整除）`, "info");
+        }
+
+        function render() {
+            const root = document.getElementById('root');
+            const bankTotalStr = getBankTotal();
+
+            root.innerHTML = `
+                <!-- Header -->
+                <div class="flex flex-col md:flex-row items-center justify-between gap-4">
+                    <div class="flex items-center gap-4">
+                        <div class="bg-indigo-600 text-white w-10 h-10 rounded-xl flex items-center justify-center shadow-lg"><i data-lucide="help-circle" size="24"></i></div>
+                        <h1 class="text-2xl md:text-3xl font-black text-slate-800">
+                            將 <span class="text-indigo-600">${state.dividend}</span> 平分給 <span class="text-orange-500">${state.divisor}</span> 個人
+                        </h1>
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick="generateRandomProblem()" class="flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-bold text-sm shadow-md transition-all active:scale-95"><i data-lucide="dices" size="18"></i>隨機出題</button>
+                        <button onclick="history.length > 0 && setState(history.pop())" class="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl text-slate-500 hover:bg-slate-50 shadow-sm font-bold text-sm"><i data-lucide="undo-2" size="16"></i>上一步</button>
+                        <button onclick="setState({isSetting: true})" class="p-2 bg-slate-800 text-white rounded-xl hover:bg-slate-700 shadow-md transition-all" title="自訂題目"><i data-lucide="settings" size="18"></i></button>
+                    </div>
+                </div>
+
+                <!-- Main Layout -->
+                <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                    <!-- Bank Column -->
+                    <div class="lg:col-span-3 flex flex-col gap-4">
+                        <div class="bg-white rounded-3xl border-4 border-indigo-600 shadow-xl overflow-hidden flex flex-col">
+                            <div class="bg-indigo-600 p-4 text-white">
+                                <span class="text-sm font-bold opacity-80 block mb-1">我的銀行</span>
+                                <div class="flex items-end justify-between border-b border-indigo-400 pb-2 mb-2">
+                                    <span class="text-4xl font-black">${bankTotalStr}</span>
+                                </div>
+                                <div class="grid grid-cols-3 gap-1">
+                                    <div class="bg-white/10 rounded-lg py-1 text-center"><div class="text-[9px] opacity-80">1 (個位)</div><div class="font-black">${state.bank.ones}</div></div>
+                                    <div class="bg-white/10 rounded-lg py-1 text-center"><div class="text-[9px] opacity-80">0.1 (十分位)</div><div class="font-black">${state.bank.tenths}</div></div>
+                                    <div class="bg-white/10 rounded-lg py-1 text-center"><div class="text-[9px] opacity-80">0.01 (百分位)</div><div class="font-black">${state.bank.hundredths}</div></div>
+                                </div>
+                            </div>
+                            <div class="p-3 bg-slate-50 space-y-2">
+                                <div class="bank-slot">
+                                    <span class="text-[10px] font-bold text-slate-400">個位 (1)</span>
+                                    <div class="flex flex-wrap gap-2 mt-1">
+                                        ${Array.from({ length: state.bank.ones }).map(() => `<div onmousedown="handleDragStart(event, 'ones')" ontouchstart="handleDragStart(event, 'ones')" class="coin w-10 h-10 bg-emerald-500 border-2 border-emerald-600 rounded-xl flex items-center justify-center text-white font-black text-sm shadow-md">1</div>`).join('')}
+                                    </div>
+                                </div>
+                                <div class="bank-slot">
+                                    <span class="text-[10px] font-bold text-slate-400">十分位 (0.1)</span>
+                                    <div class="flex flex-wrap gap-2 mt-1">
+                                        ${Array.from({ length: state.bank.tenths }).map(() => `<div onmousedown="handleDragStart(event, 'tenths')" ontouchstart="handleDragStart(event, 'tenths')" class="coin w-9 h-9 bg-rose-500 border-2 border-rose-600 rounded-full flex items-center justify-center text-white font-black text-[10px] shadow-md">0.1</div>`).join('')}
+                                    </div>
+                                </div>
+                                <div class="bank-slot">
+                                    <span class="text-[10px] font-bold text-slate-400">百分位 (0.01)</span>
+                                    <div class="flex flex-wrap gap-2 mt-1">
+                                        ${Array.from({ length: state.bank.hundredths }).map(() => `<div onmousedown="handleDragStart(event, 'hundreds')" ontouchstart="handleDragStart(event, 'hundredths')" class="coin w-8 h-8 bg-sky-400 border-2 border-sky-500 rounded-full flex items-center justify-center text-white font-black text-[9px] shadow-md">0.01</div>`).join('')}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="exchange-zone" class="drop-target h-20 rounded-2xl bg-amber-50 border-2 border-dashed border-amber-400 flex flex-col items-center justify-center group transition-all">
+                            <i data-lucide="refresh-cw" class="text-amber-600" size="20"></i>
+                            <span class="text-amber-800 font-black text-xs">拖至此換幣 (1換10)</span>
+                        </div>
+                    </div>
+
+                    <!-- Piles Column -->
+                    <div class="lg:col-span-9 flex flex-col gap-4">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 p-4 bg-slate-200/40 rounded-3xl min-h-[400px]">
+                            ${state.piles.map((pile, i) => `
+                                <div data-pile-index="${i}" class="drop-target bg-white rounded-2xl p-3 border-2 border-slate-100 shadow-sm flex items-center gap-3 h-28 overflow-hidden">
+                                    <div class="shrink-0 flex flex-col items-center justify-center bg-slate-50 w-10 h-full rounded-xl border border-slate-100">
+                                        <span class="text-[10px] font-black text-slate-400">${i+1}</span>
+                                    </div>
+                                    <div class="flex-1 flex flex-wrap gap-1 content-start h-full overflow-y-auto">
+                                        ${Array.from({ length: pile.ones }).map(() => `<div onclick="handleManualBack(${i}, 'ones')" class="w-8 h-8 bg-emerald-500 border border-emerald-600 rounded-lg flex items-center justify-center text-white font-black text-xs shrink-0 cursor-pointer">1</div>`).join('')}
+                                        ${Array.from({ length: pile.tenths }).map(() => `<div onclick="handleManualBack(${i}, 'tenths')" class="w-7 h-7 bg-rose-500 border border-rose-600 rounded-full flex items-center justify-center text-white font-black text-[9px] shrink-0 cursor-pointer">0.1</div>`).join('')}
+                                        ${Array.from({ length: pile.hundredths }).map(() => `<div onclick="handleManualBack(${i}, 'hundredths')" class="w-6 h-6 bg-sky-400 border border-sky-500 rounded-full flex items-center justify-center text-white font-black text-[8px] shrink-0 cursor-pointer">0.01</div>`).join('')}
+                                    </div>
+                                    <div class="shrink-0 bg-indigo-600 px-3 py-1 rounded-lg text-white font-black text-lg">
+                                        ${getPileTotal(pile)}
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+
+                        <!-- Footer Control -->
+                        <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between">
+                            <div class="text-sm font-bold text-slate-500"><i data-lucide="info" class="inline mr-1" size="16"></i>${state.message}</div>
+                            <div class="flex gap-2">
+                                <button onclick="checkFairness()" class="px-4 py-2 bg-slate-100 text-slate-600 rounded-xl font-black hover:bg-slate-200 transition-all text-sm">檢查平分</button>
+                                <button onclick="startQuiz()" class="px-6 py-2 bg-indigo-600 text-white rounded-xl font-black shadow-lg hover:bg-indigo-700 active:scale-95 transition-all text-sm">完成分錢</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Modals -->
+                ${state.quizStep === 'judging' ? `
+                    <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[5000] flex items-center justify-center p-6">
+                        <div class="bg-white p-8 rounded-3xl w-full max-w-sm modal-animate shadow-2xl text-center">
+                            <h2 class="text-2xl font-black mb-8">請問分完了嗎？</h2>
+                            <div class="grid grid-cols-2 gap-4">
+                                <button onclick="handleJudge('none')" class="p-6 bg-green-50 border-2 border-green-500 rounded-2xl hover:bg-green-100">
+                                    <i data-lucide="check" class="mx-auto mb-2 text-green-500" size="32"></i>
+                                    <span class="font-black text-green-700">剛好分完</span>
+                                </button>
+                                <button onclick="handleJudge('more')" class="p-6 bg-orange-50 border-2 border-orange-500 rounded-2xl hover:bg-orange-100">
+                                    <i data-lucide="help-circle" class="mx-auto mb-2 text-orange-500" size="32"></i>
+                                    <span class="font-black text-orange-700">還有剩下</span>
+                                </button>
+                            </div>
+                            <button onclick="setState({quizStep:'idle'})" class="mt-6 text-slate-400 font-bold underline">返回檢查</button>
+                        </div>
+                    </div>
+                ` : ''}
+
+                ${state.quizStep === 'inputtingRemainder' ? `
+                    <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[5000] flex items-center justify-center p-6">
+                        <div class="bg-white p-6 rounded-3xl w-full max-w-[320px] modal-animate shadow-2xl border-4 border-indigo-600">
+                            <h2 class="text-xl font-black text-center mb-4">銀行還剩多少？</h2>
+                            <div class="bg-slate-100 py-4 rounded-2xl mb-4 text-center">
+                                <span class="text-4xl font-black text-indigo-600">${state.tempRemainder || '0'}</span>
+                            </div>
+                            <div class="grid grid-cols-3 gap-2 mb-4">
+                                ${[1,2,3,4,5,6,7,8,9].map(n => `<button onclick="setState({tempRemainder: state.tempRemainder.length < 5 ? state.tempRemainder + '${n}' : state.tempRemainder})" class="numpad-btn">${n}</button>`).join('')}
+                                <button onclick="setState({tempRemainder: state.tempRemainder.includes('.') ? state.tempRemainder : (state.tempRemainder === '' ? '0.' : state.tempRemainder + '.')})" class="numpad-btn font-black text-2xl">.</button>
+                                <button onclick="setState({tempRemainder: state.tempRemainder.length < 5 ? state.tempRemainder + '0' : state.tempRemainder})" class="numpad-btn">0</button>
+                                <button onclick="setState({tempRemainder: ''})" class="numpad-btn bg-red-50 text-red-400"><i data-lucide="delete" class="mx-auto" size="18"></i></button>
+                            </div>
+                            <div class="flex gap-2 mb-2">
+                                <button onclick="submitRemainder()" class="w-full py-3 bg-indigo-600 text-white font-black rounded-xl shadow-md active:scale-95 transition-all">確認驗證</button>
+                            </div>
+                            <button onclick="setState({quizStep: 'idle'})" class="w-full py-3 bg-slate-100 text-slate-500 font-black rounded-xl flex items-center justify-center gap-2"><i data-lucide="arrow-left" size="18"></i>返回檢查</button>
+                        </div>
+                    </div>
+                ` : ''}
+
+                ${state.isSetting ? `
+                    <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[6000] flex items-center justify-center p-4">
+                        <div class="bg-white p-8 rounded-3xl w-full max-w-[360px] border-4 border-slate-800 shadow-2xl">
+                            <h2 class="text-2xl font-black text-center mb-6">重設小數題目</h2>
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="text-xs font-black text-indigo-600 tracking-widest block mb-1">被除數 (0.01 - 9.99)</label>
+                                    <input id="input-dividend" type="number" step="0.01" min="0.01" max="9.99" value="${state.dividend}" class="w-full text-3xl font-black p-3 bg-slate-50 border-2 border-slate-100 rounded-xl text-center">
+                                </div>
+                                <div>
+                                    <label class="text-xs font-black text-orange-500 tracking-widest block mb-1">平分人數 (1 - 9 人)</label>
+                                    <input id="input-divisor" type="number" value="${state.divisor}" min="1" max="9" class="w-full text-3xl font-black p-3 bg-slate-50 border-2 border-slate-100 rounded-xl text-center text-orange-500">
+                                </div>
+                                <div class="flex gap-2 pt-2">
+                                    <button onclick="setState({isSetting: false})" class="flex-1 py-3 font-bold text-slate-400">取消</button>
+                                    <button onclick="updateProblem()" class="flex-1 py-3 font-black bg-slate-800 text-white rounded-xl shadow-md">更新設定</button>
+                                </div>
+                                <button onclick="generateRandomProblem()" class="w-full py-3 font-black bg-amber-500 hover:bg-amber-600 text-white rounded-xl shadow-md flex items-center justify-center gap-2"><i data-lucide="dices" size="18"></i>隨機產生題目</button>
+                            </div>
+                        </div>
+                    </div>
+                ` : ''}
+            `;
+            lucide.createIcons();
+        }
+
+        render();
+    </script>
+</body>
+</html>
